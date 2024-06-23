@@ -1,56 +1,75 @@
-    try {
-        String ANSI_GREEN = "\u001B[32m"
-        String ANSI_NORMAL = "\u001B[0m"
-        String ANSI_BOLD = "\u001B[1m"
-        String ANSI_RED = "\u001B[31m"
-        String ANSI_YELLOW = "\u001B[33m"
-        ansiColor('xterm') {
-            stage('Checkout') {
-                if (!env.hub_org) {
-                    println(ANSI_BOLD + ANSI_RED + "Uh Oh! Please set a Jenkins environment variable named hub_org with value as registery/sunbidrded" + ANSI_NORMAL)
-                    error 'Please resolve the errors and rerun..'
-                } else
-                    println(ANSI_BOLD + ANSI_GREEN + "Found environment variable named hub_org with value as: " + hub_org + ANSI_NORMAL)
-            }
-
-            cleanWs()            
-            checkout scm
-            commit_hash = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-            build_tag = sh(script: "echo " + params.github_release_tag.split('/')[-1] + "_" + commit_hash + "_" + env.BUILD_NUMBER, returnStdout: true).trim()
-            echo "build_tag: " + build_tag
-
-            stage('Build') {
-                env.NODE_ENV = "build"
-                print "Environment will be : ${env.NODE_ENV}"
-                sh '''
-                    export JAVA_HOME=/usr/lib/jvm/jdk-11.0.2
-                    export PATH=$JAVA_HOME/bin:$PATH
-                    echo $(java -version)
-                '''
-                sh 'mvn clean install -DskipTests -DCLOUD_STORE_GROUP_ID=' + params.CLOUD_STORE_GROUP_ID + ' -DCLOUD_STORE_ARTIFACT_ID=' + params.CLOUD_STORE_ARTIFACT_ID + ' -DCLOUD_STORE_VERSION=' + params.CLOUD_STORE_VERSION    
-                sh 'mvn play2:dist -pl analytics-api'
-            }
-            stage('Package') {
-                dir('sunbird-analytics-service-distribution') {
-                sh """
-                   cp ../analytics-api/target/analytics-api-2.0-dist.zip .
-                   /opt/apache-maven-3.6.3/bin/mvn3.6 package -Pbuild-docker-image -Drelease-version=${build_tag}
-                   """
+pipeline {
+    agent any
+    environment {
+        hub_org = 'registery/sunbirded'
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                    if (!env.hub_org) {
+                        echo "\u001B[1m\u001B[31mUh Oh! Please set a Jenkins environment variable named hub_org with value as registery/sunbirded\u001B[0m"
+                        error 'Please resolve the errors and rerun..'
+                    } else {
+                        echo "\u001B[1m\u001B[32mFound environment variable named hub_org with value as: ${env.hub_org}\u001B[0m"
+                    }
+                }
+                cleanWs()
+                checkout scm
+                script {
+                    commit_hash = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    build_tag = sh(script: "echo ${params.github_release_tag.split('/')[-1]}_${commit_hash}_${env.BUILD_NUMBER}", returnStdout: true).trim()
+                    echo "build_tag: ${build_tag}"
                 }
             }
-            stage('Retagging'){
-               sh """
-                docker tag sunbird-analytics-service:${build_tag} ${hub_org}/sunbird-analytics-service:${build_tag}
-                echo {\\"image_name\\" : \\"sunbird-analytics-service\\", \\"image_tag\\" : \\"${build_tag}\\", \\"node_name\\" : \\"${env.NODE_NAME}\\"} > metadata.json
+        }
+        stage('Build') {
+            steps {
+                script {
+                    env.NODE_ENV = "build"
+                    echo "Environment will be : ${env.NODE_ENV}"
+                    sh '''
+                        export JAVA_HOME=/usr/lib/jvm/jdk-11.0.2
+                        export PATH=$JAVA_HOME/bin:$PATH
+                        java -version
+                        mvn clean install -DskipTests
+                        mvn play2:dist -pl analytics-api
+                    '''
+                }
+            }
+        }
+        stage('Package') {
+            steps {
+                dir('sunbird-analytics-service-distribution') {
+                    sh """
+                       cp ../analytics-api/target/analytics-api-2.0-dist.zip .
+                       /opt/apache-maven-3.6.3/bin/mvn3.6 package -Pbuild-docker-image -Drelease-version=${build_tag}
+                    """
+                }
+            }
+        }
+        stage('Retagging') {
+            steps {
+                sh """
+                    docker tag sunbird-analytics-service:${build_tag} ${env.hub_org}/sunbird-analytics-service:${build_tag}
+                    echo {\\"image_name\\" : \\"sunbird-analytics-service\\", \\"image_tag\\" : \\"${build_tag}\\", \\"node_name\\" : \\"${env.NODE_NAME}\\"} > metadata.json
                 """
             }
-            stage('ArchiveArtifacts') {
-                archiveArtifacts "metadata.json"
-                currentBuild.description = "${build_tag}"
+        }
+        stage('ArchiveArtifacts') {
+            steps {
+                archiveArtifacts artifacts: "metadata.json", allowEmptyArchive: true
+                script {
+                    currentBuild.description = "${build_tag}"
+                }
             }
         }
     }
-    catch (err) {
-        currentBuild.result = "FAILURE"
-        throw err
+    post {
+        failure {
+            script {
+                currentBuild.result = "FAILURE"
+            }
+        }
     }
+}
