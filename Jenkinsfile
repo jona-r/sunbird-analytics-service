@@ -43,7 +43,7 @@ pipeline {
                 dir('sunbird-analytics-service-distribution') {
                     sh """
                        cp ../analytics-api/target/analytics-api-2.0-dist.zip .
-                       /opt/apache-maven-3.6.3/bin/mvn3.6 package -Pbuild-docker-image -Drelease-version=${build_tag}
+                       /opt/apache-maven-3.6.3/bin/mvn package -Pbuild-docker-image -Drelease-version=${build_tag}
                     """
                 }
             }
